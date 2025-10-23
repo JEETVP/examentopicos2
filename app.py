@@ -143,33 +143,35 @@ def sessions_stop():
     if not user_id or not session_id:
         return err("los campos user_id y session_id son obligatorios", 400)
     session = ParkingSession.query.get(session_id)
-    if not session:
-        return err("La sesión no ha sido creada", 404)
     if session.status != "active":
-        return err("La sesión ya no esta activa y fue cobrada con exito", 409)
+        return err("La sesion ya no se encuentra activa actualmente", 400)
     user = User.query.get(user_id)
     if not user:
-        return err("El usuario no se encuentra registrado aun en Parkilite", 404)
+        return err("El usuario aun no esta registrado en Parkilite", 404)
     zone = Zone.query.get(session.zone_id)
     if not zone:
-        return err("La sesion aún no ha sido creada", 500)
+        return err("La zona aun no se encuentra disponible en Parkilite", 500)
     session.ended_at = now()
-    session.minutes = int (session.ended_at - session.started_at)
-    session.rate = Decimal(str(zone.rate_per_min))
-    session.cost = (Decimal(session.minutes) * session.rate)
-    total = session.cost
-    session.status = "inactive"
-    if session.minutes > zone.max_minutes:
-        total = (session.cost + Decimal("100.00"))
-        status = "fined"
-
+    elapsed_seconds = (session.ended_at - session.started_at).total_seconds()
+    minutes_raw = math.ceil(elapsed_seconds / 60.0)
+    grace = 3
+    billable_minutes = 0 if minutes_raw <= grace else minutes_raw
+    session.minutes = int(billable_minutes)
+    rate = Decimal(str(zone.rate_per_min))
+    cost = (Decimal(session.minutes) * rate)
+    session.cost = cost
+    total = cost
+    final_status = "stopped"
+    if minutes_raw > zone.max_minutes:
+        total = (cost + Decimal("100.00"))
+        final_status = "fined"
     session.cost_total = total
     current_balance = Decimal(str(user.balance or 0))
-
     if current_balance < total:
-        session.status = "pending"
+        session.status = "pending_payment"   
     else:
         user.balance = (current_balance - total)
+        session.status = final_status       
     db.session.commit()
     return ok(session.to_dict())
 
